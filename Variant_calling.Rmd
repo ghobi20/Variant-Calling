@@ -420,7 +420,10 @@ simple list of positions from the VCF using the bcftools query command
 (manual) and pipe through the head command to trim the output after a
 few lines:
 
-bcftools query -f'POS = %POS\n' SRR445715.vcf \| head
+```{bash, eval = F}
+bcftools query -f'POS = %POS\n' SRR445715.vcf | head
+```
+
 
 The formatting expression “POS = %POS\n” was expanded for each line in
 the VCF and consisted of the string “POS =”, which was printed on the
@@ -432,7 +435,10 @@ line.)
 
 Now add REF and ALT allele to the output, separated by a comma
 
-bcftools query -f'%POS %REF,%ALT\n' SRR445715.vcf \| head
+```{bash, eval = F}
+bcftools query -f'%POS %REF,%ALT\n' SRR445715.vcf | head
+```
+
 
 In the next step add also the quality, genotype and sequencing depth to
 the output. For the depth, check the AD annotation, which gives the
@@ -444,22 +450,47 @@ over all samples in the VCF.
 
 To illustrate this, first let’s make a combined VCF:
 
-module load htslib/1.9 bgzip SRR445715.vcf bgzip SRR445716.vcf bgzip
-SRR445717.vcf bcftools index SRR445715.vcf.gz bcftools index
-SRR445716.vcf.gz bcftools index SRR445717.vcf.gz bcftools merge -0 -o
-combined.vcf SRR445715.vcf.gz SRR445716.vcf.gz SRR445717.vcf.gz
+```{bash, eval = F}
+module load htslib/1.9
+bgzip SRR445715.vcf
+bgzip SRR445716.vcf
+bgzip SRR445717.vcf
+bcftools index SRR445715.vcf.gz
+bcftools index SRR445716.vcf.gz
+bcftools index SRR445717.vcf.gz
+bcftools merge -0 -o combined.vcf SRR445715.vcf.gz SRR445716.vcf.gz SRR445717.vcf.gz
+```
 
-bcftools query -f'%POS %QUAL [%GT %AD ] %REF %ALT\n' combined.vcf \|
-head
+```{bash, eval = F}
+bcftools query -f'%POS %QUAL [%GT %AD ] %REF %ALT\n' combined.vcf | head
+```
+
 
 Now filter rows with quality smaller than 30 and exclude indels. Check
 the record at positions 83, 244, 262, 509, 546, are they still present
 in the output?
+```{bash, eval = F}
+bcftools query -f'%POS %QUAL [%GT %AD ] %REF %ALT\n' -i'QUAL\>=30 && type="snp"' combined.vcf | head
+```
 
-bcftools query -f'%POS %QUAL [%GT %AD ] %REF %ALT\n' -i'QUAL\>=30 &&
-type="snp"' combined.vcf \| head
+No, they are no loger present. Either due that the quality is less than 30 or we have an indel.
 
 ### Question 10: Can you print rows with QUAL bigger than 30 and with at least 50 alternate reads? 
+
+```{bash, eval = F}
+[sgamino@compute-00-10 data]$ bcftools query -f'%POS QUAL = %QUAL [GT = %GT AD = %AD ] REF = %REF %ALT\n' -i'QUAL>=30 && AD[*:1]>50' combined.vcf | head
+136 QUAL = 149 GT = 1 AD = 0,68  REF = G A
+286 QUAL = 223 GT = 1 AD = 0,83  REF = A T
+305 QUAL = 203 GT = 1 AD = 0,67  REF = C G
+610 QUAL = 225 GT = 1 AD = 0,58 GT = 1 AD = 0,106 GT = 1 AD = 0,76  REF = G A
+633 QUAL = 227 GT = 1 AD = 27,99 GT = 1 AD = 18,67  REF = T C
+681 QUAL = 225 GT = 1 AD = 0,57  REF = G A
+686 QUAL = 161 GT = 1 AD = 21,64  REF = A G
+778 QUAL = 228 GT = 1 AD = 0,63 GT = 1 AD = 12,57  REF = A G
+1008 QUAL = 225 GT = 1 AD = 0,81 GT = 1 AD = 0,60  REF = A G
+1013 QUAL = 225 GT = 1 AD = 0,79 GT = 1 AD = 0,68  REF = T C
+```
+
 
 For this we will need to query the second
 value of the AD field. Note that the indexes are zero-based; the first
