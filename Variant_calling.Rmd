@@ -1,0 +1,604 @@
+---
+title: "Variant Calling"
+author: "Sofia Gamino"
+date: "2025-02-10"
+output: html_document
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+# Day 1: The problem
+
+Wild-type laboratory strains of Saccharomyces cerevisiae, like the
+reference strain S288C or the widely used strain CEN.PK113-7D can grow
+on a variety of carbon sources including lactate.
+
+In a publication from a few years ago1, a knock-out mutant strain based
+on CEN.PK113-7D was generated, in which the gene for the only known
+lactate transporter in yeast, jen1, is disrupted by an inserted reporter
+cassete. As expected, this strain cannot use lactate as a carbon source.
+Laboratory evolution was used then on this strain to obtain two
+substrains that had regained the ability to grow on lactate. Both
+substrains, IMW004 and IMW005, were subjected to WGS to gain insight
+into the genomic changes that these strains had undergone compared to
+CEN.PK113-7D over \~100 generations of laboratory evolution and that
+might explain their ability to grow on lactate despite the disruption of
+the jen1 gene.
+
+Strikingly, the substrains harbored independent point mutations in the
+acetate transporter gene ADY2 and subsequent experiments showed that
+these mutations are likely to cause changes in the substrate specificity
+of this transporter.
+
+Go to /mnt/atgc-d2/bioinfoII/drobles/variant_calling/data/. There, you
+will find:
+
+```         
+The S288C reference sequence in FASTA format (S288C_ref.fa) and its index (S288C_ref.fa.fai)
+
+a BAM file of NGS reads from the CEN.PK113-7D parent strain (reads are a random subset of those available through the NCBI SRA under accession number SRX129922) (SRR445715.aligned.sorted.bam) and its index (SRR445715.aligned.sorted.bam.bai)
+
+a BAM file of NGS reads from the lab-evolved substrain IMW004 (same reads as available under the NCBI SRA accession number SRX129995), (SRR445716.aligned.sorted.bam) and its index (SRR445716.aligned.sorted.bam.bai)
+
+a BAM file of NGS reads from the lab-evolved substrain IMW005 (same reads as available under the NCBI accession number SRX129996) (SRR445717.aligned.sorted.bam) and its index (SRR445717.aligned.sorted.bam.bai)
+
+Other files related to the work in this module (you can check the readme inside this directory if you’re curious)
+```
+
+During this week, we will replicate the findings of the original paper
+by performing variant calling and quality filtering, and using Ensembl
+VEP to predict variant consequences.
+
+1Kok et al. (2012): Laboratory evolution of new lactate transporter
+genes in a jen1D mutant of Saccharomyces cerevisiae and their
+identification as ADY2 alleles by whole-genome resequencing and
+transcriptome analysis. FEMS Yeast Res, 12:359-74. Exercises
+
+These exercises are based on the ones offered in the Wellcome Trust
+Advanced Courses and Scientific Conferences ‘NGS Sequencing
+Bioinformatics’. Some of the text is taken from other exercises written
+by Jackie and Thomas Keane.
+
+Please write a RMarkdown document with your answers to these exercises
+and send it to
+[drobles\@liigh.unam.mx](mailto:drobles@liigh.unam.mx){.email} when you
+have finished it, preferably in HTML format. 1.
+
+## Understanding our data
+
+Before we perform variant calling, it is important to check the data
+that we will be working with. First, you will need to load the samtools
+module:
+
+module load samtools/1.10
+
+Go into your working directory and create a special folder for this
+exercise. Go into this new folder. Now get some statistics for these
+three BAM files:
+
+```{bash, eval = F}
+samtools stats -r /mnt/atgc-d2/bioinfoII/drobles/variant_calling/data/S288C_ref.fa /mnt/atgc-d2/bioinfoII/drobles/variant_calling/data/SRR445715.aligned.sorted.bam > SRR445715.stats
+samtools stats -r /mnt/atgc-d2/bioinfoII/drobles/variant_calling/data/S288C_ref.fa /mnt/atgc-d2/bioinfoII/drobles/variant_calling/data/SRR445716.aligned.sorted.bam > SRR445716.stats
+samtools stats -r /mnt/atgc-d2/bioinfoII/drobles/variant_calling/data/S288C_ref.fa /mnt/atgc-d2/bioinfoII/drobles/variant_calling/data/SRR445717.aligned.sorted.bam > SRR445717.stats
+plot-bamstats -r /mnt/atgc-d2/bioinfoII/drobles/variant_calling/data/other_files/S288C_ref.fa.gc -p SRR445715.graphs/ SRR445715.stats
+plot-bamstats -r /mnt/atgc-d2/bioinfoII/drobles/variant_calling/data/other_files/S288C_ref.fa.gc -p SRR445716.graphs/ SRR445716.stats
+plot-bamstats -r /mnt/atgc-d2/bioinfoII/drobles/variant_calling/data/other_files/S288C_ref.fa.gc -p SRR445717.graphs/ SRR445717.stats
+```
+
+
+You will need to look at the SRR44571\*.graphs/index.html files that are
+generated, which include a number of graphs with different stats for
+these BAM files. If you have XQuartz active, you can try, for example:
+
+firefox SRR445717.graphs/index.html
+
+Otherwise, you can download the files to your laptop and check locally:
+
+rsync -chavzP --stats
+[drobles\@dna.lavis.unam.mx](mailto:drobles@dna.lavis.unam.mx){.email}:your_remote_directory/SRR44571\*.graphs
+your_local_directory/
+
+Open the files and examine them.
+
+### Question 1: What is the percentage of mapped reads in all three files? Check the insert size, GC content, per-base sequence content and quality per cycle graphs. Do they all look reasonable?
+
+#### What is the percentage of mapped reads in all three files?
+
+We can see the percentage of properly paired reads in the .stats files:
+
+```{bash, eval = F}
+[sgamino@chromatin data]$ for strain in SRR445715 SRR445716 SRR445717; do grep "percentage of properly paired reads" $strain.stats; done
+SN	percentage of properly paired reads (%):	95.8 # SRR445715        
+SN	percentage of properly paired reads (%):	95.5 # SRR445716
+SN	percentage of properly paired reads (%):	95.5 # SRR445717
+```
+
+I think the percentage of properly pairede reads its acceptable.
+
+#### Check the insert size, GC content, per-base sequence content and quality per cycle graphs. Do they all look reasonable?
+
+**GC content of strain SRR445715:**
+![gc-content-SRR445715](/home/sgamino/Downloads/Bioinformatica_Avanzada/Variant_Calling/SRR445715.graphs/gc-content.png)
+
+Reasonable. The gc content can represent the stabilty of the genome, and it composes around 50% of the genome.
+______________________________________________________________________________________________________________________________
+
+
+**GC content of strain SRR445716:**
+![gc-content-SRR445716](/home/sgamino/Downloads/Bioinformatica_Avanzada/Variant_Calling/SRR445716.graphs/gc-content.png)
+
+Reasonable as well
+______________________________________________________________________________________________________________________________
+
+
+**GC content of strain SRR445717:**
+![gc-content-SRR445717](/home/sgamino/Downloads/Bioinformatica_Avanzada/Variant_Calling/SRR445717.graphs/gc-content.png)
+
+Good.
+______________________________________________________________________________________________________________________________
+
+
+**per-base sequence content of strain SRR445715:**
+![acgt-content-SRR445715](/home/sgamino/Downloads/Bioinformatica_Avanzada/Variant_Calling/SRR445715.graphs/acgt-cycles.png)
+
+The content of each base pair looks ok, without major errors in the sequenciator. If one of the bases were overepresentated, there would be a problem.
+______________________________________________________________________________________________________________________________
+
+
+**per-base sequence content of strain SRR445716:**
+![gc-content-SRR445716](/home/sgamino/Downloads/Bioinformatica_Avanzada/Variant_Calling/SRR445716.graphs/acgt-cycles.png)
+
+Same, normal.
+______________________________________________________________________________________________________________________________
+
+
+**per-base sequence content of strain SRR445717:**
+![gc-content-SRR445717](/home/sgamino/Downloads/Bioinformatica_Avanzada/Variant_Calling/SRR445717.graphs/acgt-cycles.png)
+
+Normal
+______________________________________________________________________________________________________________________________
+
+
+
+**quality per cycle of strain SRR445715:**
+![gc-content-SRR445715](/home/sgamino/Downloads/Bioinformatica_Avanzada/Variant_Calling/SRR445715.graphs/quals.png)
+
+Here we can see the quality of the reads per cycle. In this case, there is a little dent that may suggest an error around the cycles 18 and 22. Also, the quality seems overall a little low in comparison to the other strains.
+______________________________________________________________________________________________________________________________
+
+
+**quality per cycle of strain SRR445716:**
+![gc-content-SRR445716](/home/sgamino/Downloads/Bioinformatica_Avanzada/Variant_Calling/SRR445716.graphs/quals.png)
+
+Here we have good quality reads, without dents.
+______________________________________________________________________________________________________________________________
+
+**quality per cycle of strain SRR445717:**
+![gc-content-SRR445717](/home/sgamino/Downloads/Bioinformatica_Avanzada/Variant_Calling/SRR445717.graphs/quals.png)
+
+Same as the last one.
+
+## 2.  Generating a pileup
+
+Now we will generate a pileup from the BAM files. The command samtools
+mpileup prints the read bases that align to each position in the
+reference genome. Now try this:
+
+```{bash, eval = F}
+samtools mpileup  -f /mnt/atgc-d2/bioinfoII/drobles/variant_calling/data/S288C_ref.fa /mnt/atgc-d2/bioinfoII/drobles/variant_calling/data/SRR445715.aligned.sorted.bam | less -S
+```
+
+
+Each line corresponds to a position on the genome. The columns are: 
+chromosome, position, reference base, read depth, read bases (“.” or “,”
+indicates match on the forward or reverse strand; ACGTN and acgtn a
+mismatch on the forward and the reverse strand) and the final column is
+the base qualities encoded into characters. The symbol “\^” marks the
+start of a read, “\$” the end of a read, deleted bases are represented
+as "\*".
+
+### Question 2: What is the read depth at position chrI:29519? What is the reference base? Are there any non-reference bases?
+
+First i make a .mpileup archive for each strain. I used a job because in qlogin it was taking really long
+
+```{bash, eval = F}
+#!/bin/bash
+# Use current working directory
+#$ -cwd
+#
+# Join stdout and stderr
+#$ -j y
+#
+# Run job through bash shell
+#$ -S /bin/bash
+#
+#You can edit the scriptsince this line
+#
+# Your job name
+#$ -N mpileups
+#
+#$ -l vf=30G
+# Send an email after the job has finished
+#$ -m e
+#$ -M ghobibohg@gmail.com
+#
+# If modules are needed, source modules environment (Do not delete the next line):
+. /etc/profile.d/modules.sh
+#
+# Add any modules you might require:
+module load samtools/1.10
+#
+# Write your commands in the next line
+for strain in SRR445715 SRR445716 SRR445717; do samtools mpileup -f /mnt/atgc-d1/bioinfoII/sgamino/variant_calling/data/S288C_ref.fa /mnt/atgc-d1/bioinfoII/sgamino/variant_calling/data/$strain.aligned.sorted.bam > /mnt/atgc-d1/bioinfoII/sgamino/variant_calling/data/$strain.mpileup $ done
+wait
+```
+
+Now i can see the info in each mpileup at the position chrI:29519
+
+```{bash, eval = F}
+[sgamino@chromatin data]$ for strain in SRR445715 SRR445716 SRR445717; do grep -w "chrI" $strain.mpileup | grep -w "29519"; done
+chrI	29519	A	56	,$,,.,.,..,,,,..,..,..........,.,,.,,........,..........,	BCB=A4BB9>BB@?A>B>B?BBBA@A?CB7?C8AB=@BBBCB=B@@@BBCAC?B00 #SRR445715
+chrI	29519	A	10	.,.......,	EHIIIIIIEH #SRR445716
+chrI	29519	A	38	,$,$,$...,,.,..,..,,..............,......	C?CDFHIHDDBGIIIIIIIIIIIGIGHIGBIEIGIIGI #SRR445717
+```
+
+#### What is the read depth at position chrI:29519?
+
+As we can see, the read depth deffers between strain. In the SRR445715 strain, the depth is 56x; a good coverage. In the SRR445716 strain the depth is 10x; much less covered. ANd finally, the strain SRR445717 has a read depth of 38.
+
+#### What is the reference base?
+
+The reference base for all strains is an Adenine (A).
+
+#### Are there any non-reference bases?
+
+No, in all strains we have correctly paired bases for each cycle. In some cycles, that position was the termination of the read, that's what an $ symbol represents.
+
+### Question 3: What about at position chrI:29522? What is the reference base? Are there any non-reference bases? 
+
+```{bash, eval = F}
+[sgamino@chromatin data]$ for strain in SRR445715 SRR445716 SRR445717; do grep -w "chrI" $strain.mpileup | grep -w "29522"; done
+for strain in SRR445715 SRR445716 SRR445717; do grep -w "chrI" $strain.mpileup | grep -w "29522"; done
+chrI	29522	T	46	aaaaAaAAaAAAAAAAAAAaAaaAaaAAAAAAAAaAAAAAAAAAAa	8;??>:4BB@BABB;A=BABBCBBB?ABA=CABBBAAABC5CAB00
+chrI	29522	T	6	AAAAAa	=GIG<I
+chrI	29522	T	24	AaaAAAAAAAAAAAAAAaAAAAAA	III<6IIGIGIDHIG@IGI@HGHF
+```
+
+#### What is the reference base?
+
+The reference base for all strains is an Adenine (T).
+
+#### Are there any non-reference bases?
+
+Yes. Actually, all of the reads are non-reference bases. In both forward and reverse strands we have lectures of A instead of T, in all depths. In this case, i would be inclined ti think that this non-reference base is indeed a polymorphism or variant. 
+
+##3. Generating genotype likelihoods and variant calling
+
+The bcftools mpileup command can be used to generate genotype
+likelihoods. Try running the following command:
+
+```{bash, eval = F}
+module load bcftools/1.10.2
+bcftools mpileup -f S288C_ref.fa SRR445715.aligned.sorted.bam | less -S
+```
+
+This is an intermediate output that contains genotype likelihoods (if
+you don’t remember what this is, go back to your notes on the Bayesian
+exercises we did!), as well as other raw information necessary to
+perform variant calling. However, we usually don’t see this information
+as it is streamed directly into the variant caller:
+
+```{bash, eval = F}
+bcftools mpileup -f S288C_ref.fa SRR445715.aligned.sorted.bam | bcftools call -m --ploidy 1  | less -S
+```
+
+
+### Question 4: Study the command. Why did we use these settings? If you were performing variant calling in human data, what settings would you use?
+
+#### Why did we use these settings?
+
+We used those settings because s.cerevisae can be a haploid or diploid organism. In this case, we want to know the variants just in the haploid reads.
+
+#### If you were performing variant calling in human data, what settings would you use?
+
+If we were working with human data, we should adjust the code to a diploid search, because humans are in most cases diploid. To do this, we need to use one of the predefined values of the -m --ploidy; in this case, either with GRCh37 or GRCh38:
+
+```{bash, eval = F}
+bcftools mpileup -f S288C_ref.fa SRR445715.aligned.sorted.bam | bcftools call -m --ploidy GRCh37| less -S
+bcftools mpileup -f S288C_ref.fa SRR445715.aligned.sorted.bam | bcftools call -m --ploidy GRCh38| less -S
+```
+
+### Question 5: What option should we add to only print variant sites?
+
+We can use the same format, but adding a -v after the m. The m allows us to search by ploidy and the v prints only the variant sites:
+
+```{bash, eval = F}
+bcftools mpileup -f S288C_ref.fa SRR445715.aligned.sorted.bam | bcftools call -m --ploidy 1  | less -S
+```
+
+If we use head, this is how it looks:
+
+```{bash, eval = F}
+#CHROM  POS     ID      REF     ALT     QUAL    FILTER  INFO    FORMAT  SRR445715.aligned.sorted.bam
+chrI    83      .       AG      A       105     .       INDEL;IDV=10;IMF=0.909091;DP=11;VDB=2.64919e-05;SGB=-0.676189;MQ0F=0;AC=1;AN=1;DP4=0,0,11,0;MQ=27       GT:PL   1:135,0
+chrI    136     .       G       A       103     .       DP=30;VDB=0.870098;SGB=-0.693021;MQ0F=0.0666667;AC=1;AN=1;DP4=0,0,27,0;MQ=20    GT:PL   1:133,0
+chrI    262     .       A       G       5.13241 .       DP=24;VDB=0.00515123;SGB=-0.680642;RPB=0.00263363;MQB=0.251407;MQSB=0.177148;BQB=0.0181774;MQ0F=0.0833333;AC=1;AN=1;DP4=1,10,12,0;MQ=23 GT:PL   1:106,75
+chrI    286     .       A       T       223     .       DP=43;VDB=0.0119686;SGB=-0.693146;MQSB=0.993447;MQ0F=0.0465116;AC=1;AN=1;DP4=0,0,15,28;MQ=21    GT:PL   1:253,0
+chrI    305     .       C       G       203     .       DP=50;VDB=0.00195611;SGB=-0.693147;MQSB=0.516106;MQ0F=0.06;AC=1;AN=1;DP4=0,0,20,28;MQ=17        GT:PL   1:233,0
+```
+
+The INFO and FORMAT fields of each entry tells us something about the
+data at the position in the genome. It consists of a set of key-value
+pairs with the tags being explained in the header of the VCF file (see
+the ##INFO and ##FORMAT lines in the header).
+
+Let mpileup output more information. For example we can ask it to add
+the FORMAT/AD tag which informs about the number of high-quality reads
+that support alleles listed in REF and ALT columns. The list of all
+available tags can be printed with “bcftools mpileup -a?”.
+
+Now let’s run the variant calling again, this time adding the -a AD
+option. We will also add the -Ou option to mpileup so that it streams a
+binary uncompressed BCF into call. This is to avoid the unnecessary CPU
+overhead of formatting the internal binary format into plain text VCF
+only to be immediately formatted back to the internal binary format
+again (this will take a little while, so remember to not run this
+command in the head node!):
+
+```{bash, eval = F}
+bcftools mpileup -a AD -f /mnt/atgc-d2/bioinfoII/drobles/variant_calling/data/S288C_ref.fa /mnt/atgc-d2/bioinfoII/drobles/variant_calling/data/SRR445715.aligned.sorted.bam -Ou \| bcftools call -mv --ploidy 1 -o SRR445715.vcf
+```
+
+
+Note: We printed this command for only one of the files, but you should
+run it for all three BAM files, this will be important for the next
+exercises.
+
+ok :)
+```{bash, eval = F}
+for strain in SRR445715 SRR445716 SRR445716 SRR445717; do bcftools mpileup -a AD -f /mnt/atgc-d1/bioinfoII/sgamino/variant_calling/data/S288C_ref.fa /mnt/atgc-d1/bioinfoII/sgamino/variant_calling/data/$strain.aligned.sorted.bam -Ou | bcftools call -mv --ploidy 1 -o /mnt/atgc-d1/bioinfoII/sgamino/variant_calling/data/$strain.vcf; done
+```
+
+
+Now examine the VCF file output of file SRR445717.vcfusing the UNIX
+command less:
+
+less -S SRR445717.vcf
+
+### Question 6: What is the reference and variant base at position chrIV:122724?
+
+```{bash, eval = F}
+[sgamino@compute-00-04 data]$ for strain in SRR445715 SRR445716 SRR445717; do grep -w "chrIV" $strain.vcf | grep -w "122724"; done
+chrIV	122724	.	G	A	225	.	DP=78;VDB=0.596164;SGB=-0.693147;MQSB=0.0397171;MQ0F=0;AC=1;AN=1;DP4=0,0,35,33;MQ=51	GT:PL:AD	1:255,0:0,68 # SRR445715
+chrIV	122724	.	G	A	225	.	DP=45;VDB=0.823767;SGB=-0.693147;MQSB=1;MQ0F=0;AC=1;AN=1;DP4=0,0,27,18;MQ=60	GT:PL:AD	1:255,0:0,45 # SRR445716
+chrIV	122724	.	G	A	225	.	DP=58;VDB=0.0205157;SGB=-0.693147;MQSB=1;MQ0F=0;AC=1;AN=1;DP4=0,0,27,26;MQ=60	GT:PL:AD	1:255,0:0,53 # SRR445717
+```
+
+As we can see, the reference base is a G, and the variant is an A, in all vcfs.
+
+### Question 7: What is the total read depth at position chrIV:122724?
+
+We can see that info in the DP tag ("Raw read depth"), and it depends on the strain. In SRR445715, its 78. In SRR445716 is 45, and in SRR445717 is 58.
+
+### Question 8: What is the number of high-quality forward reads supporting the variant call at position chrIV:122724? How many reads support the reference allele?
+
+#### What is the number of high-quality forward reads supporting the variant call at position chrIV:122724?
+
+We can see that info in the DP4 tag ("Number of high-quality ref-forward , ref-reverse, alt-forward and alt-reverse bases"), in the 3rd site, and once again it depends on the strain. In SRR445715, its 35. In SRR445716 is 27, and in SRR445717 is 27 aswell.
+
+#### How many reads support the reference allele?
+
+In all strains, there are no quality reads that support the reference allele (DP4 tag, in the 1st and 2nd sites).
+
+### Question 9: What sort of event is happening at position chrI:29007? 
+
+```{bash, eval = F}
+[sgamino@compute-00-04 data]$ for strain in SRR445715 SRR445716 SRR445717; do grep -w "chrI" $strain.vcf | grep -w "29007"; done
+chrI	29007	.	T	TG	18.2407	.	INDEL;IDV=16;IMF=0.842105;DP=19;VDB=0.00949284;SGB=-0.511536;MQSB=0.522046;MQ0F=0;AC=1;AN=1;DP4=12,4,1,2;MQ=31	GT:PL:AD	1:46,0:16,3 # SRR445715
+chrI	29007	.	T	TG	122	.	INDEL;IDV=23;IMF=0.958333;DP=24;VDB=0.0158681;SGB=-0.636426;MQSB=0.882497;MQ0F=0;AC=1;AN=1;DP4=4,13,2,5;MQ=35	GT:PL:AD	1:149,0:17,7 #SRR445717
+[sgamino@compute-00-04 data]$ grep -w "chrI" SRR445716.vcf | grep -w "29007"
+# There is no chrI:29007 position in the strain SRR445716! 
+[sgamino@compute-00-04 data]$ grep -w "chrI" SRR445717.vcf | grep -w "29007"
+chrI	29007	.	T	TG	122	.	INDEL;IDV=23;IMF=0.958333;DP=24;VDB=0.0158681;SGB=-0.636426;MQSB=0.882497;MQ0F=0;AC=1;AN=1;DP4=4,13,2,5;MQ=35	GT:PL:AD	1:149,0:17,7 
+```
+
+Well, there are two things that capture myu attention. First, there is no chrI:29007 position in the SRR445716 strain, which seems really odd (ASK). And the second one is that there are very little high quality reads in both strains (3 and 7, vs 19 and 24 total reads by DP), so in my opinion, we shouldn't take this variant read very seriously, and we need to remove it. 
+
+##4. Variant filtering
+
+In the series of commands we will learn how to filter and extract
+information from VCFs. Most of the bcftools commands accept the -i,
+--include and -e, --exclude options which will come handy when filtering
+using fixed thresholds (you can look at the bcftools documentation here:
+<http://www.htslib.org/doc/bcftools.html>). We will estimate the quality
+of the callset by calculating the transition/transversion ratio.
+
+In order to verify that the filtering expression has the desired effect,
+it is useful to first run a few small tests. Let’s start with printing a
+simple list of positions from the VCF using the bcftools query command
+(manual) and pipe through the head command to trim the output after a
+few lines:
+
+bcftools query -f'POS = %POS\n' SRR445715.vcf \| head
+
+The formatting expression “POS = %POS\n” was expanded for each line in
+the VCF and consisted of the string “POS =”, which was printed on the
+output unchanged, the string with a special meaning “%POS”, which was
+replaced by the POS column for each line, and the new line character “”,
+which put the new line character after each VCF record. (If it were not
+present, the positions from the entire VCF would be printed on a single
+line.)
+
+Now add REF and ALT allele to the output, separated by a comma
+
+bcftools query -f'%POS %REF,%ALT\n' SRR445715.vcf \| head
+
+In the next step add also the quality, genotype and sequencing depth to
+the output. For the depth, check the AD annotation, which gives the
+number of reads observed for each reference and alternate alleles. For
+example, if there were 3 reads with the reference allele and 5 reads
+with the alternate allele, the AD field would be AD=3,5. Note that the
+FORMAT fields must be enclosed within square brackets “[]” to iterate
+over all samples in the VCF.
+
+To illustrate this, first let’s make a combined VCF:
+
+module load htslib/1.9 bgzip SRR445715.vcf bgzip SRR445716.vcf bgzip
+SRR445717.vcf bcftools index SRR445715.vcf.gz bcftools index
+SRR445716.vcf.gz bcftools index SRR445717.vcf.gz bcftools merge -0 -o
+combined.vcf SRR445715.vcf.gz SRR445716.vcf.gz SRR445717.vcf.gz
+
+bcftools query -f'%POS %QUAL [%GT %AD ] %REF %ALT\n' combined.vcf \|
+head
+
+Now filter rows with quality smaller than 30 and exclude indels. Check
+the record at positions 83, 244, 262, 509, 546, are they still present
+in the output?
+
+bcftools query -f'%POS %QUAL [%GT %AD ] %REF %ALT\n' -i'QUAL\>=30 &&
+type="snp"' combined.vcf \| head
+
+### Question 10: Can you print rows with QUAL bigger than 30 and with at least 50 alternate reads? 
+
+For this we will need to query the second
+value of the AD field. Note that the indexes are zero-based; the first
+AD value is represented as “AD[0]”, therefore the second value must be
+queried as “AD[1]\>=50”. However, you will also need to indicate which
+sample to look at, to look at any sample you can use the asterisk (e.g.
+the instruction would look like “AD[\*:1]\>=50”) Hint: If you get stuck,
+look at the examples that Petr Danecek (pd3) explained here:
+<https://github.com/samtools/bcftools/issues/757>
+
+Finally, use the following command to obtain the ts/tv of an unfiltered
+callset.
+
+bcftools stats SRR445715.vcf.gz \| grep TSTV \| cut -f5
+
+### Question 11: How does the ts/tv change if you apply the filters above?
+Use the bcftools stats command with the -i option to include calls with
+QUAL at least 30 and the number of alternate reads at least 50.
+
+### Question 12: What is the ts/tv of removed sites?
+
+Another useful command is filter which allows you to annotate the VCF
+file with soft filters based on the given expression, rather than
+removing the sites completely. Can you apply the above filters to
+produce a final callset and apply the -g and -G options to soft filter
+variants around indels?
+
+bcftools filter -sLowQual -m+ -i'QUAL\>=30 && AD[\*:1]\>=50' -g8 -G10
+combined.vcf -o combined.flt.vcf
+
+### Question 13: Can you see why position chrI:1101 passed these filters?
+And why did position chrI:1107 fail the filtering step? 5. Multi-sample
+variant calling
+
+Many experiments involve sequencing multiple samples to compare the
+genetic variation between the samples. Therefore, we need to have a
+genotype for each sample at all variant sites. Typically this is
+achieved by carrying out multi-sample variant calling where all of the
+sequencing data is given to the variant caller simultaneously.
+
+### Question 14: There are three BAM files in the original directory
+/mnt/atgc-d2/bioinfoII/drobles/variant_calling/data/. Can you modify the
+command from section 3 to use all three BAM files and only write out
+variant sites in chromosome I? Write the output to a compressed BCF file
+called multi.bcf and index the file afterwards.
+
+### Question 15: Can you apply the same filters as before? How many sites
+pass the filters? Write the output to a BCF file called multi.filt.bcf
+and index the file.
+
+### Question 16: What is the ts/tv of the raw calls and of the filtered set?
+Day 2: VEP and more bcftools analyses
+
+Now that we have done some of the basics, we will now delve into the
+original problem and answer some questions regarding the original
+sequencing files. 1. Thinking about our experiment
+
+First, what are the differences between the parent strain of the study
+(CEN.PK113-7D) and the reference strain S288C? The (unfiltered)
+differences of course are the variant calls present in SRR445715.vcf.gz,
+as we used the S288C genome as a reference. But, how do we find the
+differences between the evolved strain IMW004 and its parent
+CEN.PK113-7D? For this, we can also use bcftools:
+
+bcftools isec -C SRR445716.vcf.gz SRR445715.vcf.gz \>
+present_in_IMW004_absent_in_CEN.PK113-7D.txt
+
+From this analysis, we can see there are a number of variants present in
+IMW004 that were not present in its parent strain.
+
+Okay, so now the real question. What are the variants, and the gene,
+underlying the newly acquired ability of IMW004 and IMW005 to grow on
+lactate? Since these two strains have evolved completely separately, the
+chance of them sharing an exactly identical variant that is not present
+in their parent strain is extremely low. However, it is certainly
+possible that different variants in the two strains will affect the same
+genomic feature (e.g., the same gene), which could then be taken as
+evidence that this gene may be of importance for the observed biological
+effect (growth on lactate in this case). Hint 2: Study the bcftools isec
+and bcftools merge commands.
+
+### Question 17: Can you think of a way to obtain a list of candidates that may underlie the ability of these strains to grow on lactate? 
+
+Hint: Youcan assume that variants shared by both IMW004 and IMW005 are likely to
+have arisen before the start of the experiment (i.e., from the
+unsequenced initial jen1 delta strain), and therefore are not
+biologically interesting. How many variants (unfiltered) are in IMW004
+that are not shared by any other strain?
+
+Now, can you apply filters to remove those sites that are not
+well-covered? let’s set it at DP\>30 and QUAL\>50.
+
+### Question 18: How many variants remain in IMW004 after filtering?
+
+Now, do the same you did for IMW004 but now for IMW005.
+
+### Question 19: How many variants remain in IMW005 after filtering? 2.
+Running Ensembl VEP and obtaining the information about biological
+consequences
+
+Now we will run Ensembl VEP on our files and see what gene consequences
+our mutations have. Previous to this, I installed the yeast cache (a
+local database so we don’t have to connect to the database in the UK) in
+my home directory, so we can use these. To run VEP on your files, try:
+
+module load vep/r99.2 gunzip SRR445716_unique.flt.vcf.gz vep --cache
+--dir_cache /home/drobles/.vep/ -i SRR445716_unique.flt.vcf -o
+SRR445716_unique.flt.vep.vcf --vcf --species "saccharomyces_cerevisiae"
+
+### Question 20: What do all the options that we added to the command mean?
+Hint: Look at the full options in
+<http://www.ensembl.org/info/docs/tools/vep/script/vep_options.html>.
+
+### Question 21: Look at the output VCF. What happened to the original VCF?
+Did VEP add an annotation? Which one? 3. Making sense of our results
+
+Run VEP on both IMW004 and IMW005 filtered VCF files. Study the output
+very well. Now create a program in your favourite language that outputs:
+
+```         
+Genes are mutated in any or both of the files
+What mutation is present in what strain
+```
+
+Did you find the original mutations found by the authors in the ADY2
+gene?
+
+### Question 22: Filter the consequences to only keep those that are either
+missense, stop gained, frameshift, splice acceptor or splice donor.
+These are typically the mutations that are predicted to directly affect
+protein function. How many genes are mutated with any of these
+consequences in both strains?
+
+Hint: If you’ve tried and haven’t managed to finish this exercise, you
+can see the program (in Perl!) that I wrote for this in
+/mnt/atgc-d2/bioinfoII/drobles/variant_calling/data/other_files/scripts/get_recurrently_mutated_genes.pl.
+Day 3: Using the Ensembl API to obtain more information about our
+candidates
+
+Now write a script that retrieves information for all the genes in your
+candidate list. Do this bit after doing the Ensembl REST API tutorial so
+you know what to do!
