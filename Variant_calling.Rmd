@@ -477,6 +477,15 @@ No, they are no loger present. Either due that the quality is less than 30 or we
 
 ### Question 10: Can you print rows with QUAL bigger than 30 and with at least 50 alternate reads? 
 
+For this we will need to query the second
+value of the AD field. Note that the indexes are zero-based; the first
+AD value is represented as “AD[0]”, therefore the second value must be
+queried as “AD[1]\>=50”. However, you will also need to indicate which
+sample to look at, to look at any sample you can use the asterisk (e.g.
+the instruction would look like “AD[\*:1]\>=50”) Hint: If you get stuck,
+look at the examples that Petr Danecek (pd3) explained here:
+<https://github.com/samtools/bcftools/issues/757>
+
 ```{bash, eval = F}
 [sgamino@compute-00-10 data]$ bcftools query -f'%POS QUAL = %QUAL [GT = %GT AD = %AD ] REF = %REF %ALT\n' -i'QUAL>=30 && AD[*:1]>50' combined.vcf | head
 136 QUAL = 149 GT = 1 AD = 0,68  REF = G A
@@ -491,24 +500,36 @@ No, they are no loger present. Either due that the quality is less than 30 or we
 1013 QUAL = 225 GT = 1 AD = 0,79 GT = 1 AD = 0,68  REF = T C
 ```
 
-
-For this we will need to query the second
-value of the AD field. Note that the indexes are zero-based; the first
-AD value is represented as “AD[0]”, therefore the second value must be
-queried as “AD[1]\>=50”. However, you will also need to indicate which
-sample to look at, to look at any sample you can use the asterisk (e.g.
-the instruction would look like “AD[\*:1]\>=50”) Hint: If you get stuck,
-look at the examples that Petr Danecek (pd3) explained here:
-<https://github.com/samtools/bcftools/issues/757>
-
 Finally, use the following command to obtain the ts/tv of an unfiltered
 callset.
 
-bcftools stats SRR445715.vcf.gz \| grep TSTV \| cut -f5
+```{bash, eval = F}
+[sgamino@compute-00-10 data]$ for strain in SRR445715 SRR445716 SRR445717; do bcftools stats SRR445715.vcf.gz | grep TSTV | cut -f5; done
+# TSTV, transitions/transversions:
+[5]ts/tv
+2.94
+# TSTV, transitions/transversions:
+[5]ts/tv
+2.94
+# TSTV, transitions/transversions:
+[5]ts/tv
+2.94
+```
 
 ### Question 11: How does the ts/tv change if you apply the filters above?
 Use the bcftools stats command with the -i option to include calls with
 QUAL at least 30 and the number of alternate reads at least 50.
+
+```{bash, eval = F}
+[sgamino@compute-00-10 data]$ bcftools filter -i 'QUAL>=30 && FORMAT/AD[*:1]>=50' -o combined_filtered.vcf combined.vcf
+[sgamino@compute-00-10 data]$ bcftools stats combined_filtered.vcf | grep TSTV | cut -f5
+# TSTV, transitions/transversions:
+[5]ts/tv
+3.23
+
+```
+
+When we put the filters, the ts/tv increases.
 
 ### Question 12: What is the ts/tv of removed sites?
 
@@ -518,12 +539,35 @@ removing the sites completely. Can you apply the above filters to
 produce a final callset and apply the -g and -G options to soft filter
 variants around indels?
 
-bcftools filter -sLowQual -m+ -i'QUAL\>=30 && AD[\*:1]\>=50' -g8 -G10
-combined.vcf -o combined.flt.vcf
+```{bash, eval = F}
+bcftools filter -sLowQual -m+ -i'QUAL\>=30 && AD[\*:1]\>=50' -g8 -G10 combined.vcf -o combined.flt.vcf
+```
+
+```{bash, eval = F}
+[sgamino@compute-00-10 data]$ bcftools filter -sLowQual -m+ -i'QUAL>=30 && AD[*:1]>=50' -g8 -G10 combined.vcf -o combined.flt.vcf
+[sgamino@compute-00-10 data]$ bcftools stats combined.flt.vcf | grep TSTV | cut -f5
+# TSTV, transitions/transversions:
+[5]ts/tv
+2.91
+```
+
+The tsv of the removed sites are very similar to the tsv of the original combined vcf, which suggests that the quality is poor.
 
 ### Question 13: Can you see why position chrI:1101 passed these filters?
-And why did position chrI:1107 fail the filtering step? 5. Multi-sample
-variant calling
+
+```{bash, eval = F}
+[sgamino@compute-00-10 data]$ grep -w "chrI" combined.flt.vcf | grep -w "1101"
+chrI	1101	.	G	A	152	PASS	VDB=0.254259;SGB=-0.693139;MQSB=0;MQ0F=0.0263158;MQ=27;DP=132;DP4=0,0,4,121;AN=3;AC=3	GT:PL:AD	1:182,0:0,36	1:172,0:0,58	1:104,0:0,31
+```
+
+#### And why did position chrI:1107 fail the filtering step? 
+
+```{bash, eval = F}
+[sgamino@compute-00-10 data]$ grep -w "chrI" combined.flt.vcf | grep -w "1107"
+chrI	1107	.	T	C	84	LowQual	VDB=0.00141136;SGB=-0.690438;RPB=0.0691938;MQB=0.0756927;MQSB=0.0144103;BQB=0.242036;MQ0F=0.0416667;MQ=24;DP=79;DP4=5,0,1,70;AN=3;AC=3	GT:PL:AD	1:116,5:5,17	1:114,0:0,32	1:84,0:0,22
+```
+
+##5. Multi-samplevariant calling
 
 Many experiments involve sequencing multiple samples to compare the
 genetic variation between the samples. Therefore, we need to have a
@@ -531,18 +575,14 @@ genotype for each sample at all variant sites. Typically this is
 achieved by carrying out multi-sample variant calling where all of the
 sequencing data is given to the variant caller simultaneously.
 
-### Question 14: There are three BAM files in the original directory
-/mnt/atgc-d2/bioinfoII/drobles/variant_calling/data/. Can you modify the
-command from section 3 to use all three BAM files and only write out
-variant sites in chromosome I? Write the output to a compressed BCF file
-called multi.bcf and index the file afterwards.
+### Question 14: There are three BAM files in the original directory /mnt/atgc-d2/bioinfoII/drobles/variant_calling/data/. Can you modify the command from section 3 to use all three BAM files and only write out variant sites in chromosome I? Write the output to a compressed BCF file called multi.bcf and index the file afterwards.
 
-### Question 15: Can you apply the same filters as before? How many sites
-pass the filters? Write the output to a BCF file called multi.filt.bcf
-and index the file.
+
+### Question 15: Can you apply the same filters as before? How many sites pass the filters? Write the output to a BCF file called multi.filt.bcf and index the file.
 
 ### Question 16: What is the ts/tv of the raw calls and of the filtered set?
-Day 2: VEP and more bcftools analyses
+
+# Day 2: VEP and more bcftools analyses
 
 Now that we have done some of the basics, we will now delve into the
 original problem and answer some questions regarding the original
