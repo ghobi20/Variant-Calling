@@ -421,7 +421,16 @@ simple list of positions from the VCF using the bcftools query command
 few lines:
 
 ```{bash, eval = F}
-bcftools query -f'POS = %POS\n' SRR445715.vcf | head
+POS = 83
+POS = 136
+POS = 262
+POS = 286
+POS = 305
+POS = 476
+POS = 485
+POS = 610
+POS = 633
+POS = 654
 ```
 
 
@@ -437,6 +446,16 @@ Now add REF and ALT allele to the output, separated by a comma
 
 ```{bash, eval = F}
 bcftools query -f'%POS %REF,%ALT\n' SRR445715.vcf | head
+83 AG,A
+136 G,A
+262 A,G
+286 A,T
+305 C,G
+476 G,T
+485 T,C
+610 G,A
+633 T,C
+654 C,T
 ```
 
 
@@ -463,6 +482,16 @@ bcftools merge -0 -o combined.vcf SRR445715.vcf.gz SRR445716.vcf.gz SRR445717.vc
 
 ```{bash, eval = F}
 bcftools query -f'%POS %QUAL [%GT %AD ] %REF %ALT\n' combined.vcf | head
+83 154 1 0,11 1 2,21 1 1,12  AG A
+136 149 1 0,27 1 0,68 1 0,33  G A
+244 20.8314 0 . 0 . 1 7,15  C CT
+262 5.13241 1 11,12 0 . 0 .  A G
+286 223 1 0,43 1 0,83 1 0,40  A T
+305 203 1 0,48 1 0,67 1 0,36  C G
+476 166 1 0,31 1 0,44 1 0,23  G T
+485 66 1 0,11 0 . 0 .  T C
+509 23.5345 0 . 0 . 1 9,20  G A
+546 15.6659 0 . 0 . 1 37,41  C T
 ```
 
 
@@ -470,7 +499,18 @@ Now filter rows with quality smaller than 30 and exclude indels. Check
 the record at positions 83, 244, 262, 509, 546, are they still present
 in the output?
 ```{bash, eval = F}
-bcftools query -f'%POS %QUAL [%GT %AD ] %REF %ALT\n' -i'QUAL\>=30 && type="snp"' combined.vcf | head
+bcftools query -f'%POS %QUAL [%GT %AD ] %REF %ALT\n' -i'QUAL>=30 && type="snp"' combined.vcf | head
+136 149 1 0,27 1 0,68 1 0,33  G A
+286 223 1 0,43 1 0,83 1 0,40  A T
+305 203 1 0,48 1 0,67 1 0,36  C G
+476 166 1 0,31 1 0,44 1 0,23  G T
+485 66 1 0,11 0 . 0 .  T C
+610 225 1 0,58 1 0,106 1 0,76  G A
+633 227 1 16,22 1 27,99 1 18,67  T C
+654 173 1 9,18 1 3,43 1 6,32  C T
+675 67 0 . 1 14,31 1 9,35  A G
+681 225 1 0,32 1 0,57 1 0,48  G A
+
 ```
 
 No, they are no loger present. Either due that the quality is less than 30 or we have an indel.
@@ -560,12 +600,16 @@ The tsv of the removed sites are very similar to the tsv of the original combine
 chrI	1101	.	G	A	152	PASS	VDB=0.254259;SGB=-0.693139;MQSB=0;MQ0F=0.0263158;MQ=27;DP=132;DP4=0,0,4,121;AN=3;AC=3	GT:PL:AD	1:182,0:0,36	1:172,0:0,58	1:104,0:0,31
 ```
 
+
+
 #### And why did position chrI:1107 fail the filtering step? 
 
 ```{bash, eval = F}
 [sgamino@compute-00-10 data]$ grep -w "chrI" combined.flt.vcf | grep -w "1107"
 chrI	1107	.	T	C	84	LowQual	VDB=0.00141136;SGB=-0.690438;RPB=0.0691938;MQB=0.0756927;MQSB=0.0144103;BQB=0.242036;MQ0F=0.0416667;MQ=24;DP=79;DP4=5,0,1,70;AN=3;AC=3	GT:PL:AD	1:116,5:5,17	1:114,0:0,32	1:84,0:0,22
 ```
+
+
 
 ##5. Multi-samplevariant calling
 
@@ -577,8 +621,39 @@ sequencing data is given to the variant caller simultaneously.
 
 ### Question 14: There are three BAM files in the original directory /mnt/atgc-d2/bioinfoII/drobles/variant_calling/data/. Can you modify the command from section 3 to use all three BAM files and only write out variant sites in chromosome I? Write the output to a compressed BCF file called multi.bcf and index the file afterwards.
 
+```{bash, eval = F}
+samtools merge -@ 4 /mnt/atgc-d1/bioinfoII/sgamino/variant_calling/data/multi.bam 
+/mnt/atgc-d1/bioinfoII/sgamino/variant_calling/data/SRR445715.aligned.sorted.bam 
+/mnt/atgc-d1/bioinfoII/sgamino/variant_calling/data/SRR445716.aligned.sorted.bam 
+/mnt/atgc-d1/bioinfoII/sgamino/variant_calling/data/SRR445717.aligned.sorted.bam
 
-### Question 15: Can you apply the same filters as before? How many sites pass the filters? Write the output to a BCF file called multi.filt.bcf and index the file.
+
+bcftools mpileup -a AD -f /mnt/atgc-d1/bioinfoII/sgamino/variant_calling/data/S288C_ref.fa \
+-Ou /mnt/atgc-d1/bioinfoII/sgamino/variant_calling/data/merged.bam | \
+bcftools call -mv -Ob -o /mnt/atgc-d1/bioinfoII/sgamino/variant_calling/data/multi.bcf
+
+# The commands above are the ones i used in a job to get my multi-variant calling bcf. 
+
+[sgamino@compute-00-04 data]$ bcftools index multi.bcf
+
+
+[sgamino@compute-00-04 data]$ bcftools view -r chrI -i 'GT!="./."' -O b -o multi_chrI.bcf multi.bcf # Here, i filtered my multi.bcf for just the variants in chrI. -r restricted the filter for just the chrI, and then -i 'GT!=./.' filters for samples in which the genotype was empty.
+
+[sgamino@compute-00-04 data]$ bcftools index multi_chrI.bcf # Finally, i indexed the chrI filtered bcf.
+
+```
+
+
+### Question 15: Can you apply the same filters as before? 
+
+```{bash, eval = F}
+bcftools query -f'%POS QUAL = %QUAL [GT = %GT AD = %AD ] REF = %REF %ALT\n' -i'QUAL>=30 && AD[*:1]>50' multi_chrI.bcf | head
+```
+
+
+#### How many sites pass the filters? Write the output to a BCF file called multi.filt.bcf and index the file.
+
+
 
 ### Question 16: What is the ts/tv of the raw calls and of the filtered set?
 
