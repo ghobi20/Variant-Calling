@@ -591,7 +591,7 @@ bcftools filter -sLowQual -m+ -i'QUAL\>=30 && AD[\*:1]\>=50' -g8 -G10 combined.v
 2.91
 ```
 
-The tsv of the removed sites are very similar to the tsv of the original combined vcf, which suggests that the quality is poor.
+The tsv of the removed sites is very similar to the tsv of the original combined vcf, which suggests that the quality is poor.
 
 ### Question 13: Can you see why position chrI:1101 passed these filters?
 
@@ -629,7 +629,7 @@ samtools merge -@ 4 /mnt/atgc-d1/bioinfoII/sgamino/variant_calling/data/multi.ba
 
 
 bcftools mpileup -a AD -f /mnt/atgc-d1/bioinfoII/sgamino/variant_calling/data/S288C_ref.fa \
--Ou /mnt/atgc-d1/bioinfoII/sgamino/variant_calling/data/merged.bam | \
+-Ou /mnt/atgc-d1/bioinfoII/sgamino/variant_calling/data/multi.bam | \
 bcftools call -mv -Ob -o /mnt/atgc-d1/bioinfoII/sgamino/variant_calling/data/multi.bcf
 
 # The commands above are the ones i used in a job to get my multi-variant calling bcf. 
@@ -637,7 +637,7 @@ bcftools call -mv -Ob -o /mnt/atgc-d1/bioinfoII/sgamino/variant_calling/data/mul
 [sgamino@compute-00-04 data]$ bcftools index multi.bcf
 
 
-[sgamino@compute-00-04 data]$ bcftools view -r chrI -i 'GT!="./."' -O b -o multi_chrI.bcf multi.bcf # Here, i filtered my multi.bcf for just the variants in chrI. -r restricted the filter for just the chrI, and then -i 'GT!=./.' filters for samples in which the genotype was empty.
+[sgamino@compute-00-04 data]$ bcftools view -r chrI -i 'GT!="./."' -O b -o multi_chrI.bcf multi.bcf # Here, i filtered my multi.bcf for just the variants in chrI. -r restricted the filter for just the chrI, and then -i 'GT!=./.' filters for samples in which the genotype wasn't empty.
 
 [sgamino@compute-00-04 data]$ bcftools index multi_chrI.bcf # Finally, i indexed the chrI filtered bcf.
 
@@ -647,21 +647,58 @@ bcftools call -mv -Ob -o /mnt/atgc-d1/bioinfoII/sgamino/variant_calling/data/mul
 ### Question 15: Can you apply the same filters as before? 
 
 ```{bash, eval = F}
-bcftools query -f'%POS QUAL = %QUAL [GT = %GT AD = %AD ] REF = %REF %ALT\n' -i'QUAL>=30 && AD[*:1]>50' multi_chrI.bcf | head
+bcftools query -f'%POS QUAL = %QUAL [GT = %GT AD = %AD ] REF = %REF %ALT\n' -i'QUAL>=30 && AD[\*:1]\>50' multi_chrI.bcf | head
+109 QUAL = 66 GT = 0/1 AD = 89,71  REF = G C
+115 QUAL = 86 GT = 0/1 AD = 74,80  REF = C G
+136 QUAL = 170 GT = 1/1 AD = 0,128  REF = G A
+137 QUAL = 90 GT = 0/1 AD = 90,55  REF = C CT
+286 QUAL = 225 GT = 1/1 AD = 0,166  REF = A T
+305 QUAL = 225 GT = 1/1 AD = 0,151  REF = C G
+349 QUAL = 139 GT = 0/1 AD = 130,96  REF = C T
+472 QUAL = 51 GT = 0/1 AD = 81,53  REF = C T
+476 QUAL = 192 GT = 1/2 AD = 0,89,37  REF = G T,C
+509 QUAL = 185 GT = 0/1 AD = 44,67  REF = G A
+
 ```
 
 
 #### How many sites pass the filters? Write the output to a BCF file called multi.filt.bcf and index the file.
 
+```{bash, eval = F}
+[sgamino@compute-00-12 data]$ bcftools view -i 'QUAL>=30 && AD[*:1]>50' -O b -o multi.filt.bcf multi_chrI.bcf
+[sgamino@compute-00-12 data]$ bcftools index multi.filt.bcf
+[sgamino@compute-00-12 data]$ bcftools view multi.filt.bcf | wc -l
+686
+```
 
+686 sites pass the filters
 
 ### Question 16: What is the ts/tv of the raw calls and of the filtered set?
+
+Raw calls:
+```{bash, eval = F}
+[sgamino@compute-00-12 data]$ bcftools stats multi_chrI.bcf | grep TSTV | cut -f5
+# TSTV, transitions/transversions:
+[5]ts/tv
+2.62
+```
+
+Filtered set:
+```{bash, eval = F}
+[sgamino@compute-00-12 data]$ bcftools stats multi.filt.bcf | grep TSTV | cut -f5
+# TSTV, transitions/transversions:
+[5]ts/tv
+2.94
+```
+
 
 # Day 2: VEP and more bcftools analyses
 
 Now that we have done some of the basics, we will now delve into the
 original problem and answer some questions regarding the original
-sequencing files. 1. Thinking about our experiment
+sequencing files. 
+
+## 1. Thinking about our experiment
 
 First, what are the differences between the parent strain of the study
 (CEN.PK113-7D) and the reference strain S288C? The (unfiltered)
@@ -670,8 +707,9 @@ as we used the S288C genome as a reference. But, how do we find the
 differences between the evolved strain IMW004 and its parent
 CEN.PK113-7D? For this, we can also use bcftools:
 
-bcftools isec -C SRR445716.vcf.gz SRR445715.vcf.gz \>
-present_in_IMW004_absent_in_CEN.PK113-7D.txt
+```{bash, eval = F}
+bcftools isec -C SRR445716.vcf.gz SRR445715.vcf.gz \> present_in_IMW004_absent_in_CEN.PK113-7D.txt
+```
 
 From this analysis, we can see there are a number of variants present in
 IMW004 that were not present in its parent strain.
@@ -684,26 +722,64 @@ in their parent strain is extremely low. However, it is certainly
 possible that different variants in the two strains will affect the same
 genomic feature (e.g., the same gene), which could then be taken as
 evidence that this gene may be of importance for the observed biological
-effect (growth on lactate in this case). Hint 2: Study the bcftools isec
-and bcftools merge commands.
+effect (growth on lactate in this case). **Hint 2: Study the bcftools isec
+and bcftools merge commands.**
 
 ### Question 17: Can you think of a way to obtain a list of candidates that may underlie the ability of these strains to grow on lactate? 
 
-Hint: Youcan assume that variants shared by both IMW004 and IMW005 are likely to
+> I think a good way to obtain a list of the candidates would be to check the sites that are involved in the pathway of substrate consumption. We could also see the mutations that are not shared in the mutated strain.
+
+Hint: You can assume that variants shared by both IMW004 and IMW005 are likely to
 have arisen before the start of the experiment (i.e., from the
 unsequenced initial jen1 delta strain), and therefore are not
-biologically interesting. How many variants (unfiltered) are in IMW004
-that are not shared by any other strain?
+biologically interesting. 
+#### How many variants (unfiltered) are in IMW004 that are not shared by any other strain?
 
-Now, can you apply filters to remove those sites that are not
+```{bash, eval = F}
+[sgamino@compute-00-12 data]$ bcftools isec -C SRR445716.vcf.gz SRR445715.vcf.gz SRR445717.vcf.gz > present_in_IM004_absent_in_CEN.PK113-7D_and_IM005.txt
+Note: -w option not given, printing list of sites...
+[sgamino@compute-00-12 data]$ wc -l present_in_IM004_absent_in_CEN.PK113-7D_and_IM005.txt
+209 present_in_IM004_absent_in_CEN.PK113-7D_and_IM005.txt
+```
+
+> There are 209 sites in the IMW004 strain that are not present in the others.
+
+#### Now, can you apply filters to remove those sites that are not
 well-covered? let’s set it at DP\>30 and QUAL\>50.
+
+```{bash, eval = F}
+[sgamino@compute-00-12 data]$ bcftools isec -O z -o present_in_IM004_absent_in_CEN.PK113-7D_and_IW005.vcf.gz -C -w 1 SRR445716.vcf.gz SRR445715.vcf.gz SRR445717.vcf.gz
+[sgamino@compute-00-12 data]$ bcftools filter -i 'QUAL >= 50 && DP >= 30' -o present_in_IM004_absent_in_CEN.PK113-7D_and_IW005_FILTERED.vcf.gz present_in_IM004_absent_in_CEN.PK113-7D_and_IW005.vcf.gz 
+```
+
 
 ### Question 18: How many variants remain in IMW004 after filtering?
 
+```{bash, eval = F}
+[sgamino@compute-00-12 data]$ bcftools view -H present_in_IM004_absent_in_CEN.PK113-7D_and_IW005_FILTERED.vcf.gz | wc -l
+21
+```
+
+
 Now, do the same you did for IMW004 but now for IMW005.
 
-### Question 19: How many variants remain in IMW005 after filtering? 2.
-Running Ensembl VEP and obtaining the information about biological
+```{bash eval = F}
+[sgamino@compute-00-12 data]$ bcftools isec -O z -o present_in_IMW005_absent_in_CEN.PK113-7d_and_IMW005.vcf.gz -w 1 -C SRR445717.vcf.gz SRR445716.vcf.gz SRR445715.vcf.gz
+[sgamino@compute-00-12 data]$ mv present_in_IMW005_absent_in_CEN.PK113-7d_and_IMW005.vcf.gz present_in_IMW005_absent_in_CEN.PK113-7D_and_IMW004.vcf.gz
+[sgamino@compute-00-12 data]$ bcftools filter -i 'QUAL >= 50 $$ DP >=30' -o present_in_IMW005_absent_in_CEN.PK113-7D_and_IMW004_FILTERED.vcf.gz present_in_IMW005_absent_in_CEN.PK113-7D_and_IMW004.vcf.gz
+[filter.c:2491 filters_init1] Error: the tag "$$" is not defined in the VCF header
+[sgamino@compute-00-12 data]$ bcftools filter -i 'QUAL >= 50 && DP >=30' -o present_in_IMW005_absent_in_CEN.PK113-7D_and_IMW004_FILTERED.vcf.gz present_in_IMW005_absent_in_CEN.PK113-7D_and_IMW004.vcf.gz
+```
+
+### Question 19: How many variants remain in IMW005 after filtering? 
+
+```{bash eval = F}
+[sgamino@compute-00-12 data]$ bcftools view -H present_in_IMW005_absent_in_CEN.PK113-7D_and_IMW004_FILTERED.vcf.gz | wc -l
+16
+```
+
+
+## 2. Running Ensembl VEP and obtaining the information about biological
 consequences
 
 Now we will run Ensembl VEP on our files and see what gene consequences
@@ -711,16 +787,34 @@ our mutations have. Previous to this, I installed the yeast cache (a
 local database so we don’t have to connect to the database in the UK) in
 my home directory, so we can use these. To run VEP on your files, try:
 
-module load vep/r99.2 gunzip SRR445716_unique.flt.vcf.gz vep --cache
---dir_cache /home/drobles/.vep/ -i SRR445716_unique.flt.vcf -o
-SRR445716_unique.flt.vep.vcf --vcf --species "saccharomyces_cerevisiae"
+```{bash eval = F}
+module load vep/r99.2 
+gunzip present_in_IM004_absent_in_CEN.PK113-7D_and_IW005_FILTERED.vcf.gz
+gunzip present_in_IMW005_absent_in_CEN.PK113-7D_and_IMW004_FILTERED.vcf.gz
+vep --cache --dir_cache /home/drobles/.vep/ -i -present_in_IM004_absent_in_CEN.PK113-7D_and_IW005_FILTERED.vcf.gz -o SRR445716_unique.flt.vep.vcf --vcf --species "saccharomyces_cerevisiae"
+vep --cache --dir_cache /home/drobles/.vep/ -i present_in_IMW005_absent_in_CEN.PK113-7D_and_IMW004_FILTERED.vcf.gz -o SRR445717_unique.flt.vep.vcf --vcf --species "saccharomyces_cerevisiae"
+```
 
 ### Question 20: What do all the options that we added to the command mean?
 Hint: Look at the full options in
 <http://www.ensembl.org/info/docs/tools/vep/script/vep_options.html>.
 
+- [--cache]: Enables the use of cache
+- [--dir_cache]: It specifies the cache directory
+- [-i]: It specifies the input file
+- [-o]: It specifies the output file
+- [--vcf]: It specifies to write output in vcf format.
+- [--species]: It specifies the species of the variants.
+
 ### Question 21: Look at the output VCF. What happened to the original VCF?
-Did VEP add an annotation? Which one? 3. Making sense of our results
+
+> It now contains much more information, regarding of the variant consequence predictor analysis. The vcf function has adden information to each variant.
+
+#### Did VEP add an annotation? Which one? 
+
+> Yes, it added the annotation CSQ, with the format: Allele|Consequence|IMPACT|SYMBOL|Gene|Feature_type|Feature|BIOTYPE|EXON|INTRON|HGVSc|HGVSp|cDNA_position|CDS_position|Protein_position|Amino_acids|Codons|Existing_variation|DISTANCE|STRAND|FLAGS|SYMBOL_SOURCE|HGNC_ID
+
+## 3. Making sense of our results
 
 Run VEP on both IMW004 and IMW005 filtered VCF files. Study the output
 very well. Now create a program in your favourite language that outputs:
@@ -742,7 +836,8 @@ consequences in both strains?
 Hint: If you’ve tried and haven’t managed to finish this exercise, you
 can see the program (in Perl!) that I wrote for this in
 /mnt/atgc-d2/bioinfoII/drobles/variant_calling/data/other_files/scripts/get_recurrently_mutated_genes.pl.
-Day 3: Using the Ensembl API to obtain more information about our
+
+# Day 3: Using the Ensembl API to obtain more information about our
 candidates
 
 Now write a script that retrieves information for all the genes in your
