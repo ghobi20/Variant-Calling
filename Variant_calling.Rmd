@@ -820,18 +820,78 @@ Run VEP on both IMW004 and IMW005 filtered VCF files. Study the output
 very well. Now create a program in your favourite language that outputs:
 
 ```         
-Genes are mutated in any or both of the files
+Genes that are mutated in any or both of the files
 What mutation is present in what strain
 ```
 
+```{r}
+library(VariantAnnotation)
+
+IMW004_mutations = matrix(NA, ncol = 4, nrow = 0)
+IMW005_mutations = matrix(NA, ncol = 4, nrow = 0)
+
+IMW004_vcf = readVcf("Variant_Calling/SRR445716_unique.flt.vep.vcf", genome = "saccharomyces_cerevisae")
+IMW004_csq = info(IMW004_vcf)$CSQ
+IMW004_csq = as.list(IMW004_csq)
+
+IMW005_vcf = readVcf("Variant_Calling/SRR445717_unique.flt.vep.vcf", genome = "saccharomyces_cerevisae")
+IMW005_csq = info(IMW005_vcf)$CSQ
+IMW005_csq = as.list(IMW005_csq)
+
+for (var in IMW004_csq) {
+  for (i in 1:length(var)) {
+    var_split = strsplit(var, "\\|")
+    IMW004_mutations = rbind(IMW004_mutations, c(var_split[[i]][2], var_split[[i]][3], var_split[[i]][4], var_split[[i]][5]))
+  }
+}
+IMW004_mutations_df <- as.data.frame(IMW004_mutations)
+#Aquí ya tenemos un data frame con los porcentajes de identidad y ids.
+
+for (var in IMW005_csq) {
+  for (i in 1:length(var)) {
+    var_split = strsplit(var, "\\|")
+    IMW005_mutations = rbind(IMW005_mutations, c(var_split[[i]][2], var_split[[i]][3], var_split[[i]][4], var_split[[i]][5]))
+  }
+}
+IMW005_mutations_df <- as.data.frame(IMW005_mutations)
+
+#Here we can know the mutation shared in borth strains
+IMW004_IMW005_mutations <- merge(IMW004_mutations, IMW005_mutations)
+print(IMW004_IMW005_mutations)
+```
+
+
+
 Did you find the original mutations found by the authors in the ADY2
 gene?
+
+> Yes, as you can see in the code above, one of the shared mutations in both IMW004 and IMW005 strains is indeed the one in ADY2, a missense variant.
 
 ### Question 22: Filter the consequences to only keep those that are either
 missense, stop gained, frameshift, splice acceptor or splice donor.
 These are typically the mutations that are predicted to directly affect
 protein function. How many genes are mutated with any of these
 consequences in both strains?
+
+```{r}
+IMW004_IMW005_mutations_filtered = matrix(NA, ncol = 4, nrow = 0)
+
+for (var in 1:nrow(IMW004_mutations_df)){
+  mutation_type <- IMW004_mutations[var, 1]
+  if (mutation_type == "frameshift_variant" | mutation_type == "missense_variant" | mutation_type == "stop_gained" | mutation_type == "splice_acceptor_variant" | mutation_type == "splice_donor_variant"){
+    IMW004_IMW005_mutations_filtered <- rbind(IMW004_IMW005_mutations_filtered, IMW004_mutations[var,])
+  }
+}
+for (var in 1:nrow(IMW005_mutations_df)){
+  mutation_type <- IMW005_mutations[var, 1]
+  if (mutation_type == "frameshift_variant" | mutation_type == "missense_variant" | mutation_type == "stop_gained" | mutation_type == "splice_acceptor_variant" | mutation_type == "splice_donor_variant"){
+    IMW004_IMW005_mutations_filtered <- rbind(IMW004_IMW005_mutations_filtered, IMW005_mutations[var,])
+  }
+}
+IMW004_IMW005_mutations_filtered <- unique(IMW004_IMW005_mutations_filtered)
+(IMW004_IMW005_mutations_filtered_df = as.data.frame(IMW004_IMW005_mutations_filtered))
+```
+
 
 Hint: If you’ve tried and haven’t managed to finish this exercise, you
 can see the program (in Perl!) that I wrote for this in
@@ -843,3 +903,41 @@ candidates
 Now write a script that retrieves information for all the genes in your
 candidate list. Do this bit after doing the Ensembl REST API tutorial so
 you know what to do!
+
+```{r}
+library(jsonlite)
+library(httr)
+library(tidyr)
+
+fetch_endpoint_POST <- function(server, request, data, content_type = 'application/json'){
+
+  r <- POST(paste(server, request, sep = ""), content_type("application/json"), accept("application/json"), body = data)
+
+  stop_for_status(r)
+
+  if (content_type == "application/json"){
+    return(fromJSON(content(r, "text", encoding = "UTF-8")))
+  } else {
+    return(content(r, "text", encoding = "UTF-8"))
+  }
+}
+
+ensembl_server = "https://rest.ensembl.org/"
+# We will use the lookup extensión to gather as many data as we can from our candidate genes.
+lookup_ext_post = "lookup/id/"
+ids_query = toJSON(list(ids=IMW004_IMW005_mutations_filtered_df$V4))
+
+lookup_res = fetch_endpoint_POST(ensembl_server, lookup_ext_post, ids_query, "application/json")
+
+IMW004_IMW005_mutations_filtered_info = c()
+
+for (gene in lookup_res) {
+  IMW004_IMW005_mutations_filtered_info = c(IMW004_IMW005_mutations_filtered_info, paste0(gene$object_type, "{", gene$display_name, "{", gene$db_type, "{", gene$source, "{", gene$canonical_transcript, "{", gene$logic_name, "{", gene$biotype, "{", gene$description, "{", gene$assembly_name, "{", gene$end, "{", gene$start, "{", gene$seq_region_name, "{", gene$strand, "{", gene$id))  
+}
+
+IMW004_IMW005_mutations_filtered_info = as.data.frame(IMW004_IMW005_mutations_filtered_info)
+# Aquí está contenida toda la información acerca de los genes presentes en ambas cepas
+IMW004_IMW005_mutations_filtered_info_df = separate(IMW004_IMW005_mutations_filtered_info, IMW004_IMW005_mutations_filtered_info, into = c("Object type", "Display name", "db type", "Source", "Canoical transcript", "Logic name", "Biotype", "Description", "Assembly name", "End", "Start", "Seq region name", "Strand", "Gene id"), sep = "{")
+
+```
+
